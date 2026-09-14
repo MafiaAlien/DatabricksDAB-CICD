@@ -1,0 +1,20 @@
+resources:
+  pipelines:
+    citibike_etl_pipeline_sdp:
+      name: citibike_etl_pipeline_sdp
+      catalog: ${var.catalog}
+      schema: "01_bronze"
+      root_path: ../citibike_etl/sdp
+      libraries:
+        - glob:
+            include: ../citibike_etl/sdp/**
+
+      configuration:
+        catalog: ${var.catalog}
+        bronze_schema: "01_bronze"
+        silver_schema: "02_silver"
+        gold_schema: "03_gold"
+
+      serverless: true
+      continuous: false
+      channel: CURRENT

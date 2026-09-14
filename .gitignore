@@ -1,0 +1,29 @@
+.databricks/
+build/
+dist/
+__pycache__/
+*.egg-info
+.venv/
+scratch/**
+!scratch/README.md
+**/explorations/**
+**/!explorations/README.md
+.venv*/
+
+# macOS
+.DS_Store
+
+# Test and coverage artifacts
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+
+# Tool caches
+.ruff_cache/
+
+# Backup files
+*.bak
+
+# Claude Code / Databricks AI Tools skill symlinks (target .databricks/, which is ignored)
+.claude/
