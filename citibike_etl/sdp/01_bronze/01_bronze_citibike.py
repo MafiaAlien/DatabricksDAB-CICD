@@ -4,7 +4,8 @@ from pyspark.sql.types import StructType, StructField, StringType, DecimalType, 
 catalog = spark.conf.get("catalog")
 bronze_schema = spark.conf.get("bronze_schema")
 
-# 显式 schema 时必须带上 _rescued_data，否则 Auto Loader 无处安放解析失败的字段
+# With an explicit schema, _rescued_data must be declared as well: it is where
+# Auto Loader puts fields it fails to parse or that the schema does not cover
 schema = StructType([
     StructField("ride_id", StringType(), True),
     StructField("rideable_type", StringType(), True),
@@ -28,7 +29,8 @@ schema = StructType([
     comment="Bronze layer: raw Citibike trip data, incrementally ingested from the landing volume",
 )
 def bronze_jc_citibike():
-    # 指向目录而非单个文件：以后往 volume 里丢新的月度 csv 会自动被接上
+    # Point at the directory, not a single file, so new monthly CSVs dropped
+    # into the volume are picked up on the next run without a code change
     return (
         spark.readStream.format("cloudFiles")
         .option("cloudFiles.format", "csv")

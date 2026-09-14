@@ -1,6 +1,6 @@
 import sys
 
-# citibike / utils 由 dab_project wheel 提供，见 databricks.yml 的 artifacts 段
+# citibike / utils come from the dab_project wheel; see the artifacts section in databricks.yml
 from citibike.citibike_utils import get_trip_duration_mins
 from utils.datetime_utils import timestamp_to_date_col
 from pyspark.sql.functions import create_map, lit

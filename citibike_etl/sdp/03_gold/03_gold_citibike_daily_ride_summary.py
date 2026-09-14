@@ -5,8 +5,8 @@ silver_schema = spark.conf.get("silver_schema")
 gold_schema = spark.conf.get("gold_schema")
 
 
-# 聚合必须用 materialized_view + 批读：streaming table 是 append-only，
-# 上游行变化时不会重算聚合结果
+# Aggregations need a materialized view with a batch read: streaming tables are
+# append-only and would not recompute the aggregate when upstream rows change
 @dp.materialized_view(
     name=f"{gold_schema}.daily_ride_summary",
     comment="Gold layer: daily aggregates of ride durations and trip counts",

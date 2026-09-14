@@ -52,6 +52,6 @@ resources:
           spec:
             environment_version: "5"
             dependencies:
-              # 由顶层 artifacts.python_artifact 构建，deploy 时自动上传
+              # Built by the top-level artifacts.python_artifact and uploaded automatically on deploy
               - ../dist/*.whl
       performance_target: PERFORMANCE_OPTIMIZED

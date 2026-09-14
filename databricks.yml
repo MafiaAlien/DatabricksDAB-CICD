@@ -7,7 +7,7 @@ bundle:
 include:
   - resources/*.yml
 
-# 每次 bundle deploy 前自动构建 wheel，产物在 ./dist 下。
+# Builds the wheel before every bundle deploy; the output lands in ./dist.
 artifacts:
   python_artifact:
     type: whl
