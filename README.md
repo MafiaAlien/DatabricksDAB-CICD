@@ -158,20 +158,15 @@ uv run pytest                                    # all tests
 uv run pytest --cov=src --cov-report=term-missing # with coverage
 ```
 
-`tests/conftest.py` supplies the shared fixtures:
+`tests/conftest.py` supplies a single `spark` fixture that degrades gracefully:
+`databricks.connect.DatabricksSession` when Databricks Connect is installed (local
+development, real serverless compute), otherwise a plain local `SparkSession`
+(`local[*]`). That fallback is what lets the identical test suite run unchanged in CI,
+where no workspace credentials are available — see [CI / CD](#ci--cd) below.
 
-| Fixture | Provides |
-|---|---|
-| `spark` | A `DatabricksSession`; connection validated for version compatibility at session start |
-| `load_fixture` | Loads JSON/CSV from `fixtures/` into a DataFrame |
-
-It also falls back to serverless compute when no cluster is configured, so a fresh clone
-needs only a valid profile to run the suite.
-
-`fixtures/` is currently empty and `load_fixture` is unused — both are scaffolding kept in
-place for tests that need a fixed input data set rather than inline literals. The existing
-tests construct their DataFrames inline, which keeps the expected values visible right next
-to the assertions.
+`fixtures/` is currently empty — scaffolding kept in place for tests that need a fixed
+input data set rather than inline literals. The existing tests construct their DataFrames
+inline, which keeps the expected values visible right next to the assertions.
 
 Coverage is scoped to `src/` via `.coveragerc`. Tests target the transformation helpers —
 pure DataFrame logic with deterministic inputs and expected outputs — rather than asserting
@@ -202,6 +197,99 @@ without an email hardcoded in the repo.
 
 ---
 
+## CI / CD
+
+Two GitHub Actions workflows cover the path from a commit on `dev` to a deployed bundle in
+production.
+
+| Workflow | File | Trigger | Does |
+|---|---|---|---|
+| **CI** | `.github/workflows/ci-workflow.yml` | push to `dev`, PR into `main` | Install, run `pytest` with coverage, upload HTML report |
+| **CD** | `.github/workflows/cd-workflow.yml` | push to `main` | `bundle deploy` to `test`, then to `prod` |
+
+```
+ commit on dev ──▶ CI (pytest + coverage)
+       │
+       ▼
+ PR into main ───▶ CI (pytest + coverage)   ← merge gate
+       │
+       ▼
+ push to main ───▶ CD ──▶ deploy test ──▶ deploy prod
+```
+
+### CI — test and coverage
+
+The CI job runs on `ubuntu-latest` with Python 3.12 and installs
+`requirements-pyspark.txt` — a pinned, **Databricks Connect-free** set that includes
+`pyspark` itself. Because no `databricks.connect` is present, the `spark` fixture falls
+back to a local `SparkSession`, so the suite executes entirely inside the runner: no
+workspace, no credentials, no compute cost, and nothing to leak from a fork's pull
+request.
+
+```yaml
+- name: Run pytest & generate HTML report
+  run: |
+    pytest \
+      --disable-warnings \
+      --cov=./src \
+      --cov-report=html
+```
+
+The `htmlcov/` output is uploaded as a `coverage-html` build artifact, so coverage for a
+given run can be browsed from the Actions page rather than being read out of log text.
+
+### CD — promote to test, then prod
+
+The CD workflow is two sequential jobs; `cd-deploy-prod` declares `needs: cd-deploy-test`,
+so production is only touched after the test workspace deploy has succeeded. Each job is
+bound to a GitHub **Environment** (`test` / `prod`), which is where the workspace secrets
+live and where a required-reviewer rule can be attached if a manual approval gate before
+prod is wanted.
+
+Each job installs the Databricks CLI, writes a `~/.databrickscfg` profile, and deploys the
+bundle target of the same name:
+
+```yaml
+- name: Configure Databricks
+  run: |
+    cat <<EOF > ~/.databrickscfg
+    [TEST]
+    host = https://adb-....azuredatabricks.net
+    azure_tenant_id = ${{ secrets.AZURE_TENANT_ID }}
+    azure_client_id = ${{ secrets.AZURE_CLIENT_ID }}
+    azure_client_secret = ${{ secrets.AZURE_CLIENT_SECRET }}
+    EOF
+
+- name: Deploy to TEST
+  run: databricks bundle deploy --target test --profile TEST
+```
+
+Authentication is an **Azure service principal** (M2M OAuth) rather than a personal access
+token, so deployments are not tied to an individual user account. The three values come
+from the environment's secrets:
+
+| Secret | Purpose |
+|---|---|
+| `AZURE_TENANT_ID` | Entra ID tenant of the workspace |
+| `AZURE_CLIENT_ID` | Service principal application id |
+| `AZURE_CLIENT_SECRET` | Service principal secret |
+
+Both target workspaces share the same secret *names*, each environment supplying its own
+values — promoting a change from test to prod therefore requires no edit to the workflow
+or to the bundle source.
+
+`databricks bundle deploy` builds the wheel as part of the deploy (the `artifacts` block
+in `databricks.yml`), so the CD job needs no separate build step beyond `setuptools` and
+`wheel`.
+
+> The service principal must have workspace access plus `USE CATALOG` / `CREATE` rights on
+> `citibike_test` and `citibike_prod`, and be able to create jobs and pipelines. Bundle
+> permissions in `databricks.yml` are granted to
+> `${workspace.current_user.userName}` — under CD that resolves to the service principal,
+> not to a human deployer.
+
+---
+
 ## Local development
 
 Dependencies are managed with [uv](https://docs.astral.sh/uv/):
@@ -222,6 +310,9 @@ intended behaviour, not a conflict.
 ## Project structure
 
 ```
+├── .github/workflows/
+│   ├── ci-workflow.yml             pytest + coverage on dev / PRs to main
+│   └── cd-workflow.yml             bundle deploy to test, then prod
 ├── databricks.yml                 bundle definition, targets, wheel artifact
 ├── resources/
 │   ├── citibike_etl_pipeline_nb.job.yml       notebook-task job
