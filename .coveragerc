@@ -1,0 +1,4 @@
+[run]
+omit =
+    # any files or globs you want to exclude
+    src/*/__init__.py

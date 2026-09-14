@@ -1,0 +1,57 @@
+resources:
+  jobs:
+    citibike_etl_pipeline_nb:
+      name: citibike_etl_pipeline_nb
+      tasks:
+        - task_key: 01_bronze_citibike
+          notebook_task:
+            notebook_path: ../citibike_etl/notebooks/01_bronze/01_bronze_citibike.ipynb
+            source: WORKSPACE
+            base_parameters:
+              catalog: ${var.catalog}
+              pipeline_id: "{{job.id}}"
+              run_id: "{{job.run_id}}"
+              task_id: "{{task.name}}"
+              processed_timestamp: "{{job.start_time.iso_datetime}}"
+          environment_key: citibike_etl_environment
+        - task_key: 02_silver_citibike
+          depends_on:
+            - task_key: 01_bronze_citibike
+          notebook_task:
+            notebook_path: ../citibike_etl/notebooks/02_silver/02_silver_citibike.ipynb
+            source: WORKSPACE
+            base_parameters:
+              catalog: ${var.catalog}
+              pipeline_id: "{{job.id}}"
+              run_id: "{{job.run_id}}"
+              task_id: "{{task.name}}"
+              processed_timestamp: "{{job.start_time.iso_datetime}}"
+          environment_key: citibike_etl_environment
+        - task_key: 03_gold_citibike_daily_ride_summary
+          depends_on:
+            - task_key: 02_silver_citibike
+          notebook_task:
+            notebook_path: ../citibike_etl/notebooks/03_gold/03_gold_citibike_daily_ride_summary.ipynb
+            source: WORKSPACE
+            base_parameters:
+              catalog: ${var.catalog}
+          environment_key: citibike_etl_environment
+        - task_key: 03_gold_citibike_daily_station_performance
+          depends_on:
+            - task_key: 02_silver_citibike
+          notebook_task:
+            notebook_path: ../citibike_etl/notebooks/03_gold/03_gold_citibike_daily_station_performance.ipynb
+            source: WORKSPACE
+            base_parameters:
+              catalog: ${var.catalog}
+          environment_key: citibike_etl_environment
+      queue:
+        enabled: true
+      environments:
+        - environment_key: citibike_etl_environment
+          spec:
+            environment_version: "5"
+            dependencies:
+              # 由顶层 artifacts.python_artifact 构建，deploy 时自动上传
+              - ../dist/*.whl
+      performance_target: PERFORMANCE_OPTIMIZED
