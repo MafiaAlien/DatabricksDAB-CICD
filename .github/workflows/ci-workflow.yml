@@ -1,0 +1,41 @@
+name: CI WorkFlow
+
+on:
+  push: 
+    branches:
+      - "dev" 
+  
+  pull_request:
+    branches:
+      - "main"
+
+jobs:
+  ci_job:
+    name: CI job 
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout codes
+        uses: actions/checkout@v6.1.0
+     
+      - name: set up python 3.12
+        uses: actions/setup-python@v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies + pytest html 
+        run: 
+          python3 -m pip install --upgrade pip
+          pip install -r requirements-pyspark.txt
+      
+      - name: Run pytest & generate HTML report
+        run: |
+          pytest \
+            --disable-warnings \
+            --cov=./src \
+            --cov-report=html
+
+      - name: Upload coverage HTML report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-html
+          path: htmlcov
