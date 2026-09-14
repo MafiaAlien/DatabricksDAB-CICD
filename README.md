@@ -16,7 +16,7 @@ styles can be compared side by side on identical data.
 | **Source** | [Citi Bike System Data](https://citibikenyc.com/system-data) — publicly available trip records |
 | **Dataset** | `JC-202503-citibike-tripdata.csv` — Jersey City stations, March 2025 (15.3 MB) |
 | **Landing zone** | Unity Catalog Volume: `/Volumes/{catalog}/00_landing/source_citibike_data/` |
-| **Grain** | One row per bike trip |
+| **Grain** | One row per bike trip (~73K rows) |
 
 Each row carries a ride id, rideable type, start/end timestamps, start/end station name and
 id, start/end coordinates, and a member-vs-casual flag. The schema is declared explicitly
@@ -42,6 +42,12 @@ Bronze stamps every row with a `metadata` map (`pipeline_id`, `run_id`, `task_id
 `processed_date`) sourced from job runtime parameters, so any row can be traced back to the
 run that produced it.
 
+![Unity Catalog structure after a full run](docs/images/catalog-explorer.png)
+
+Unity Catalog after a completed run. Note the object types: bronze and silver are
+**streaming tables**, while both gold tables are **materialized views** — the reasoning is
+in the SDP section below.
+
 ---
 
 ## Three implementations of the same pipeline
@@ -51,6 +57,12 @@ run that produced it.
 | **1** | Notebooks | `citibike_etl/notebooks/` | Job `citibike_etl_pipeline_nb` (`notebook_task`) | Serverless |
 | **2** | Python scripts | `citibike_etl/scripts/` | Job `citibike_etl_pipeline_py` (`spark_python_task`) | Serverless |
 | **3** | Declarative (SDP) | `citibike_etl/sdp/` | Pipeline `citibike_etl_pipeline_sdp` | Serverless |
+
+![Jobs and pipelines deployed by the bundle](docs/images/jobs-and-pipelines.png)
+
+All three are deployed by a single `databricks bundle deploy`. The `[dev ...]` name prefix
+and the tag are applied automatically by DAB's `development` mode, which keeps concurrent
+deployments from different developers isolated from one another.
 
 ### 1 & 2 — Imperative jobs
 
@@ -85,6 +97,14 @@ expressed so the platform handles incrementality:
   materialized view does.
 - Layer schemas are passed in through pipeline `configuration` and read with
   `spark.conf.get()`, keeping the code free of hardcoded catalog or schema names.
+
+![SDP pipeline run](docs/images/sdp-pipeline-dag.png)
+
+A completed run over the March 2025 file: 73K trip records flow through bronze (22s) and
+silver (9s), producing 32 daily buckets in `daily_ride_summary` and 2.6K rows in
+`daily_station_performance` (day × station). The dependency graph, the
+per-table record counts, and the incrementalisation strategy shown for each table are all
+derived by the platform; none of it is declared in the pipeline code.
 
 > **Note:** all three implementations write to the *same* target tables. Run them against
 > separate catalogs (or one at a time), since a Delta table written by a job and a streaming
