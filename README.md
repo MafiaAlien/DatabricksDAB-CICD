@@ -205,7 +205,7 @@ production.
 | Workflow | File | Trigger | Does |
 |---|---|---|---|
 | **CI** | `.github/workflows/ci-workflow.yml` | push to `dev`, PR into `main` | Install, run `pytest` with coverage, upload HTML report |
-| **CD** | `.github/workflows/cd-workflow.yml` | push to `main` | `bundle deploy` to `test`, then to `prod` |
+| **CD** | `.github/workflows/cd-workflow.yml` | push to `main` | Re-run tests, then `bundle validate` + `deploy` to `test`, then to `prod` |
 
 ```
  commit on dev ──▶ CI (pytest + coverage)
@@ -214,7 +214,8 @@ production.
  PR into main ───▶ CI (pytest + coverage)   ← merge gate
        │
        ▼
- push to main ───▶ CD ──▶ deploy test ──▶ deploy prod
+ push to main ───▶ CD ──▶ verify ──▶ deploy test ──▶ deploy prod
+                         (pytest)   validate+deploy   validate+deploy
 ```
 
 ### CI — test and coverage
@@ -240,14 +241,26 @@ given run can be browsed from the Actions page rather than being read out of log
 
 ### CD — promote to test, then prod
 
-The CD workflow is two sequential jobs; `cd-deploy-prod` declares `needs: cd-deploy-test`,
-so production is only touched after the test workspace deploy has succeeded. Each job is
-bound to a GitHub **Environment** (`test` / `prod`), which is where the workspace secrets
-live and where a required-reviewer rule can be attached if a manual approval gate before
-prod is wanted.
+Three sequential jobs: `verify` → `cd-deploy-test` → `cd-deploy-prod`, each chained with
+`needs:`, so production is only touched after the test workspace deploy has succeeded.
 
-Each job installs the Databricks CLI, writes a `~/.databrickscfg` profile, and deploys the
-bundle target of the same name:
+**`verify`** re-runs the test suite on the exact commit being deployed, with the same
+Databricks Connect-free requirements as CI. CI only fires on `dev` pushes and on PRs into
+`main`, so a *direct* push to `main` would otherwise reach a deploy having never been
+tested; this job closes that hole.
+
+A **`concurrency`** group (`cd-${{ github.ref }}`, `cancel-in-progress: false`) keeps two
+pushes to `main` from deploying into the same workspace at once — a newer run queues
+behind the in-flight one rather than racing it. Cancellation is deliberately off: a deploy
+killed halfway leaves the workspace in a partial state.
+
+Each deploy job is bound to a GitHub **Environment** (`test` / `prod`), which is where the
+workspace secrets live — and, for `prod`, where a required-reviewer rule should be
+attached; without one the environment is only a secrets namespace and provides no approval
+gate. The job installs `uv` (needed because `artifacts.python_artifact` in
+`databricks.yml` shells out to `uv build --wheel`) and the Databricks CLI via
+`databricks/setup-cli`, writes a `~/.databrickscfg` profile, then validates before
+deploying:
 
 ```yaml
 - name: Configure Databricks
@@ -260,9 +273,15 @@ bundle target of the same name:
     azure_client_secret = ${{ secrets.AZURE_CLIENT_SECRET }}
     EOF
 
+- name: Validate bundle
+  run: databricks bundle validate --strict --target test --profile TEST
+
 - name: Deploy to TEST
   run: databricks bundle deploy --target test --profile TEST
 ```
+
+`--strict` turns bundle warnings into errors, so a malformed resource or an unknown field
+fails the run before anything is uploaded to the workspace.
 
 Authentication is an **Azure service principal** (M2M OAuth) rather than a personal access
 token, so deployments are not tied to an individual user account. The three values come
@@ -278,9 +297,8 @@ Both target workspaces share the same secret *names*, each environment supplying
 values — promoting a change from test to prod therefore requires no edit to the workflow
 or to the bundle source.
 
-`databricks bundle deploy` builds the wheel as part of the deploy (the `artifacts` block
-in `databricks.yml`), so the CD job needs no separate build step beyond `setuptools` and
-`wheel`.
+`databricks bundle deploy` builds the wheel as part of the deploy, so there is no separate
+build step in the workflow.
 
 > The service principal must have workspace access plus `USE CATALOG` / `CREATE` rights on
 > `citibike_test` and `citibike_prod`, and be able to create jobs and pipelines. Bundle
