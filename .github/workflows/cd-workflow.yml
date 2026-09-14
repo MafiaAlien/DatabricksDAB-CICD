@@ -5,9 +5,45 @@ on:
     branches:
       - main
 
+# Only one deployment pipeline at a time; a newer push to main waits
+# rather than racing an in-flight deploy.
+concurrency:
+  group: cd-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
+  # ---------------------------------------------------------------------------
+  # Gate: nothing is deployed unless the test suite passes on this exact commit.
+  # Guards against a direct push to main, which would bypass the PR-triggered CI.
+  # ---------------------------------------------------------------------------
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6.1.0
+
+      - name: Setup Python
+        uses: actions/setup-python@v7.0.0
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          pip install -r requirements-pyspark.txt
+
+      - name: Run pytest
+        run: |
+          pytest \
+            --disable-warnings \
+            --cov=./src \
+            --cov-report=term-missing
+
+  # ---------------------------------------------------------------------------
   cd-deploy-test:
     name: Deploy to TEST
+    needs: verify
     runs-on: ubuntu-latest
     environment: test
     steps:
@@ -19,13 +55,13 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install Databricks CLI
-        run: curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+      # Required by artifacts.python_artifact in databricks.yml:
+      # `bundle deploy` shells out to `uv build --wheel` before uploading.
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
 
-      - name: Install Dependencies
-        run: |
-          pip install --upgrade pip
-          pip install setuptools wheel
+      - name: Install Databricks CLI
+        uses: databricks/setup-cli@main
 
       - name: Configure Databricks
         run: |
@@ -38,16 +74,26 @@ jobs:
           azure_client_secret = ${{ secrets.AZURE_CLIENT_SECRET }}
           EOF
 
+      - name: Validate bundle
+        run: |
+          databricks bundle validate \
+            --strict \
+            --target test \
+            --profile TEST
+
       - name: Deploy to TEST
         run: |
           databricks bundle deploy \
             --target test \
             --profile TEST
 
+  # ---------------------------------------------------------------------------
   cd-deploy-prod:
     name: Deploy to PROD
     needs: cd-deploy-test
     runs-on: ubuntu-latest
+    # Configure this GitHub Environment with a required reviewer, otherwise
+    # it is only a secrets namespace and provides no approval gate.
     environment: prod
     steps:
       - name: Checkout code
@@ -58,13 +104,11 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install Databricks CLI
-        run: curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
 
-      - name: Install Dependencies
-        run: |
-          pip install --upgrade pip
-          pip install setuptools wheel
+      - name: Install Databricks CLI
+        uses: databricks/setup-cli@main
 
       - name: Configure Databricks
         run: |
@@ -76,6 +120,13 @@ jobs:
           azure_client_id = ${{ secrets.AZURE_CLIENT_ID }}
           azure_client_secret = ${{ secrets.AZURE_CLIENT_SECRET }}
           EOF
+
+      - name: Validate bundle
+        run: |
+          databricks bundle validate \
+            --strict \
+            --target prod \
+            --profile PROD
 
       - name: Deploy to PROD
         run: |
